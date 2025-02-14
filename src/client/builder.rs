@@ -135,7 +135,7 @@ impl ClientBuilder {
 
         tracing::debug!("Creating StdioTransport");
         let transport = StdioTransport::with_streams(child_stdout, child_stdin)?;
-        let client = Client::new(Arc::new(transport));
+        let client = Client::new(Arc::new(transport), Some(child));
 
         let implementation = self.implementation.unwrap_or_else(|| {
             let default_impl = Implementation {
