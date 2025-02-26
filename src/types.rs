@@ -338,7 +338,7 @@ pub struct GetPromptResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolResult {
     pub content: Vec<MessageContent>,
-    #[serde(rename = "isError")]
+    #[serde(rename = "isError", default)]
     pub is_error: bool,
 }
 

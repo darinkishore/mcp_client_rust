@@ -36,12 +36,14 @@ pub struct Client {
     response_receiver: Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<Message>>>,
     /// An MPSC sender for sending responses from the transport handler to this client.
     response_sender: tokio::sync::mpsc::UnboundedSender<Message>,
+    /// To handle shutdown, in stdin/stdout case we also need to shut down subprocess
+    subprocess: Option<tokio::process::Child>,
 }
 
 impl Client {
     /// Creates a new MCP client with the given transport.
     /// This does not perform initialization. You typically call `client.initialize(...)` next.
-    pub fn new(transport: Arc<dyn Transport>) -> Self {
+    pub fn new(transport: Arc<dyn Transport>, subprocess: Option<tokio::process::Child>) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let client = Self {
             transport: transport.clone(),
@@ -49,6 +51,7 @@ impl Client {
             request_counter: Arc::new(RwLock::new(0)),
             response_receiver: Arc::new(Mutex::new(rx)),
             response_sender: tx.clone(),
+            subprocess,
         };
 
         // Spawn a task to forward all transport messages into our MPSC channel.
@@ -212,9 +215,23 @@ impl Client {
     }
 
     /// Shuts down the client by closing the transport. This does not send a server shutdown request.
-    pub async fn shutdown(&self) -> Result<(), Error> {
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
         tracing::info!("Shutting down MCP client");
-        self.transport.close().await
+        self.transport.close().await?;
+        if let Some(mut child) = self.subprocess.take() {
+            const TIMEOUT: u64 = 2;
+            if let Ok(None) = child.try_wait() {
+                tracing::info!("Have an associated subprocess, waiting {}s", TIMEOUT);
+                let _ = timeout(Duration::from_secs(TIMEOUT), child.wait()).await;
+            }
+            if let Ok(None) = child.try_wait() {
+                tracing::info!("Have an associated subprocess, sending kill and waiting {}s", TIMEOUT);
+                let _ = child.start_kill();
+                let _ = timeout(Duration::from_secs(TIMEOUT), child.wait()).await;
+            }
+            tracing::info!("Exit code from subprocess {:?}", child.try_wait());
+        }
+        Ok(())
     }
 
     /// Lists available tools on the server by calling `tools/list`.
